@@ -1,0 +1,94 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LT Plant Stock Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--c:#fff;--t:#1b2430;--m:#64708a;--a:#0b5cab;--b:#d9dee7;--r:#c0392b;--g:#1e8449}
+@media(prefers-color-scheme:dark){:root{--bg:#12161c;--c:#1b212b;--t:#e6eaf0;--m:#98a3b8;--a:#5aa9f0;--b:#2e3746;--r:#ef7b6e;--g:#58c28a}}
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--t)}
+header{background:var(--c);border-bottom:1px solid var(--b);padding:12px 16px}h1{font-size:18px;margin:0 0 8px}
+main{padding:12px 16px;max-width:1300px;margin:auto}
+nav{display:flex;flex-wrap:wrap;gap:4px;margin:10px 0}nav button{background:var(--c);color:var(--t);border:1px solid var(--b);padding:7px 11px;border-radius:6px;cursor:pointer}
+nav button.on{background:var(--a);color:#fff;border-color:var(--a)}
+.card{background:var(--c);border:1px solid var(--b);border-radius:8px;padding:12px;margin-bottom:12px}
+.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+label{display:block;font-size:12px;color:var(--m)}input,select{width:100%;padding:6px;border:1px solid var(--b);border-radius:5px;background:var(--bg);color:var(--t);font:inherit}
+button.p{background:var(--a);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;margin-top:8px}button.d{background:none;border:0;color:var(--r);cursor:pointer}
+.w{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid var(--b);padding:5px 8px;text-align:left;white-space:nowrap}th{color:var(--m);font-weight:600}
+.e{color:var(--m)}.pend{color:var(--r);font-weight:600}.ok{color:var(--g);font-weight:600}h2{font-size:15px;margin:0 0 8px}
+</style></head><body>
+<header><h1>LT Plant Stock Tracker</h1>
+<div class="g" style="align-items:end">
+<div><label>Active cable size</label><select id="cur" onchange="cur=this.value;go()"></select></div>
+<div><label>New cable size (e.g. 3.5C x 95 sqmm)</label><input id="nn"></div>
+<div><label>Cores</label><input id="nc"></div>
+<div><label>Plan (km)</label><input id="np" type="number" step="any"></div>
+<div><button class="p" style="margin:0" onclick="addCable()">Add cable / plan</button></div>
+<div><button class="p" style="margin:0" onclick="xl(0)">Export Excel (this cable)</button></div>
+<div><button class="p" style="margin:0" onclick="xl(1)">Export Excel (all)</button></div>
+<div><button class="p" style="margin:0" onclick="backup()">Save backup file</button></div>
+<div><button class="p" style="margin:0" onclick="document.getElementById('rf').click()">Restore backup</button><input id="rf" type="file" accept=".json" style="display:none" onchange="restore(this)"></div>
+<div class="e" id="st" style="font-size:12px"></div>
+</div></header>
+<main><nav id="nav"></nav><div id="v"></div></main>
+<script>
+const S=[['rbd','RBD / Conductor'],['ins','Insulation'],['lay','Laid-up'],['inn','Inner sheath'],['arm','Armour'],['out','Outer sheath']];
+const N=Object.fromEntries(S),SRC={ins:'rbd',lay:'ins',inn:'lay',arm:'inn',out:'arm'};
+const SN={rbd:'Conductor',ins:'Insulated',lay:'Laid-up',inn:'Inner sheath',arm:'Armoured',out:'Outer sheath (finished)'};
+const EX=['Extruder-120mm','Extruder-100mm','Sioplas'],CL=['Red','Yellow','Blue','Black'],
+CO=['Red','Yellow','Blue','Black','Green','Grey','Natural','White'];
+const TL=[['fault','Fault?','s',['No','Yes']],['fl','Fault at length (m)','n'],['fp','Fault position','s',['','Bottom','Middle','Top']],['scrap','Scrap (kg)','n'],['km','Km done','n'],['tuNo','Takeup drum no','t'],['tuSize','Takeup drum size','t']];
+const ext=[['mc','Machine','s',EX],['die','Die size','t'],['nozzle','Nozzle size','t'],['comp','Compound','t']];
+const F={
+rbd:[['date','Date','d'],['poNo','Payoff spool/basket no','t'],['wire','Wire size (mm)','t'],['tuKind','Takeup type','s',['Single','Dual']],['load','Loading type','s',['Bobbin','Basket']],['mc','Conductor made on','s',['1250 Buncher','Stranding']],['spools','Spools used (stranding)','n'],['baskets','Baskets used (stranding)','n'],['bwire','Basket wire size','t'],['roller','Roller size','t'],['die','Die size','t'],['dist','Distribution','t']],
+ins:[['date','Date','d'],['po','Payoff drum (conductor)','p'],...ext.slice(0,3),['color','Insulation color','s',CO],['comp','Compound','t']],
+lay:[['date','Date','d'],['cores','Cores','t'],['dt','DT used','s',['1250DT','1600DT']],...[1,2,3,4].flatMap(i=>[['po'+i,'Payoff '+i+' drum','p'],['c'+i,'Payoff '+i+' color','s',CL]])],
+inn:[['date','Date','d'],['po','Payoff drum (laid-up)','p'],...ext],
+arm:[['date','Date','d'],['po','Payoff drum (inner sheath)','p'],['type','Armour type','s',['28B','48B','61B']],['strips','No. of strips','n'],['lay','Lay','t'],['mat','Material','t']],
+out:[['date','Date','d'],['po','Payoff drum (armoured)','p'],...ext]};
+for(const s in F)F[s]=F[s].concat(TL);
+let D={cables:[],runs:[],drums:[]},cur='',tab='dash';
+try{D=JSON.parse(localStorage.getItem('ltstock'))||D}catch(e){}
+const sv=()=>{try{localStorage.setItem('ltstock',JSON.stringify(D));stat()}catch(e){alert('Could not save on this device (private mode or storage full). Use "Save backup file" now.')}};
+function stat(){const e=document.getElementById('st');if(e)e.textContent='Stored on this device only · '+D.runs.length+' entries, '+D.drums.length+' drums'}
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
+function backup(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(D)],{type:'application/json'}));a.download='LT_Plant_Backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function restore(i){const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const x=JSON.parse(r.result);if(!x.cables||!x.runs||!x.drums)throw 0;if(!confirm('Replace all data on this device with the backup?'))return;D=x;sv();go()}catch(e){alert('Invalid backup file')}i.value=''};r.readAsText(f)}
+const esc=x=>String(x??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cn=id=>(D.cables.find(c=>c.id==id)||{}).name||'';
+if(!D.cables.find(c=>c.id==cur))cur=D.cables[0]?D.cables[0].id:'';
+function addCable(){const n=nn.value.trim();if(!n)return alert('Enter cable size');const c={id:'c'+Date.now(),name:n,cores:nc.value,plan:+np.value||0};D.cables.push(c);cur=c.id;nn.value=nc.value=np.value='';sv();go()}
+function done(c,s){return D.runs.filter(r=>r.cable==c&&r.stage==s).reduce((a,r)=>a+(+r.km||0),0)}
+function field(s,[k,l,t,o]){const id='f_'+k;let h='<div><label>'+l+'</label>';
+if(t=='s')h+='<select id="'+id+'">'+o.map(x=>'<option>'+x+'</option>').join('')+'</select>';
+else if(t=='p'){const L=D.drums.filter(d=>d.stock==SRC[s]&&d.cable==cur&&d.status=='full');h+='<select id="'+id+'"><option value="">-- select --</option>'+L.map(d=>'<option value="'+esc(d.no)+'">'+esc(d.no)+' ('+d.km+' km'+(d.size?', '+esc(d.size):'')+')</option>').join('')+'</select>'}
+else h+='<input id="'+id+'" type="'+(t=='n'?'number':t=='d'?'date':'text')+'"'+(t=='n'?' step="any"':'')+'>';return h+'</div>'}
+function addRun(s){if(!cur)return alert('Add a cable size first');const r={id:Date.now(),stage:s,cable:cur},used=[];
+for(const f of F[s]){const v=document.getElementById('f_'+f[0]).value;r[f[0]]=v;
+if(f[2]=='p'){if(!v)return alert('Select '+f[1]);const d=D.drums.find(d=>d.stock==SRC[s]&&d.cable==cur&&d.no==v&&d.status=='full');if(!d)return alert('Drum '+v+' not available');if(used.includes(d))return alert('Same drum chosen twice');used.push(d);r[f[0]+'km']=d.km;r[f[0]+'sz']=d.size}}
+if(!r.tuNo.trim())return alert('Enter takeup drum no');if(!(+r.km>0))return alert('Enter km done');
+if(D.drums.some(d=>d.stock==s&&d.cable==cur&&d.no==r.tuNo&&d.status=='full'))return alert('Drum no already in '+SN[s]+' stock');
+used.forEach(d=>{d.status='empty';d.usedIn=N[s];d.usedRun=r.id});
+D.drums.push({no:r.tuNo,cable:cur,stock:s,km:+r.km,size:r.tuSize,status:'full',born:r.id});D.runs.push(r);sv();go()}
+function delRun(id){const r=D.runs.find(x=>x.id==id),t=D.drums.find(d=>d.born==id);
+if(t&&t.status=='empty')return alert('Takeup drum was already used in the next stage. Delete that entry first.');
+if(!confirm('Delete entry? Payoff drums return to stock and takeup drum is removed.'))return;
+D.drums=D.drums.filter(d=>d.born!=id);D.drums.forEach(d=>{if(d.usedRun==id){d.status='full';delete d.usedIn;delete d.usedRun}});D.runs=D.runs.filter(x=>x.id!=id);sv();go()}
+function cell(r,f){let v=r[f[0]];if(f[2]=='p'&&v)v+=' ('+r[f[0]+'km']+' km)';return esc(v)}
+function stage(s){let h='<div class="card"><h2>'+N[s]+' – new entry'+(cur?' for '+esc(cn(cur)):'')+'</h2>'+(SRC[s]?'<div class="e">Payoff drums come from '+SN[SRC[s]]+' stock; used drums become empty automatically.</div>':'')+'<div class="g">'+F[s].map(f=>field(s,f)).join('')+'</div><button class="p" onclick="addRun(\''+s+'\')">Save entry</button></div>';
+const R=D.runs.filter(r=>r.cable==cur&&r.stage==s),c=D.cables.find(c=>c.id==cur);
+if(c){const dn=done(cur,s);h+='<div class="card">Plan '+c.plan+' km · Done '+dn.toFixed(2)+' km · <span class="pend">Pending '+Math.max(0,c.plan-dn).toFixed(2)+' km</span></div>'}
+h+='<div class="card w"><h2>Entries</h2><table><tr>'+F[s].map(f=>'<th>'+f[1]+'</th>').join('')+'<th></th></tr>'+R.map(r=>'<tr>'+F[s].map(f=>'<td>'+cell(r,f)+'</td>').join('')+'<td><button class="d" onclick="delRun('+r.id+')">Delete</button></td></tr>').join('')+'</table></div>';return h}
+function dash(){let h='<div class="card w"><h2>Pending km per plan (by section)</h2>';if(!D.cables.length)return h+'Add a cable size above to begin.</div>';
+h+='<table><tr><th>Cable</th><th>Plan km</th>'+S.map(s=>'<th>'+s[1]+'<br>done / pending</th>').join('')+'</tr>'+D.cables.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+c.plan+'</td>'+S.map(s=>{const d=done(c.id,s[0]),p=Math.max(0,c.plan-d);return '<td>'+d.toFixed(2)+' / <span class="'+(p?'pend':'ok')+'">'+p.toFixed(2)+'</span></td>'}).join('')+'</tr>').join('')+'</table></div>';return h}
+function stock(){let h='';for(const s of S.map(x=>x[0])){const L=D.drums.filter(d=>d.stock==s);
+const t=(a,e)=>'<table><tr><th>Cable</th><th>Drum no</th><th>Size</th><th>Km</th>'+(e?'<th>Emptied at</th>':'')+'</tr>'+a.map(d=>'<tr><td>'+esc(cn(d.cable))+'</td><td>'+esc(d.no)+'</td><td>'+esc(d.size)+'</td><td>'+d.km+'</td>'+(e?'<td>'+esc(d.usedIn)+'</td>':'')+'</tr>').join('')+'</table>';
+h+='<div class="card w"><h2>'+SN[s]+' stock</h2><b>In stock ('+L.filter(d=>d.status=='full').length+')</b>'+t(L.filter(d=>d.status=='full'))+'<br><b class="e">Empty drums ('+L.filter(d=>d.status=='empty').length+')</b>'+t(L.filter(d=>d.status=='empty'),1)+'</div>'}return h}
+function xl(all){if(typeof XLSX=='undefined')return alert('Excel library failed to load (check internet).');const ok=c=>all||c==cur,wb=XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.cables.filter(c=>ok(c.id)).map(c=>{const o={Cable:c.name,Cores:c.cores,'Plan km':c.plan};S.forEach(s=>{const d=done(c.id,s[0]);o[s[1]+' done']=+d.toFixed(3);o[s[1]+' pending']=+Math.max(0,c.plan-d).toFixed(3)});return o})),'Pending');
+S.forEach(([s,n])=>XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.runs.filter(r=>r.stage==s&&ok(r.cable)).map(r=>{const o={Cable:cn(r.cable)};F[s].forEach(f=>{o[f[1]]=r[f[0]];if(f[2]=='p'){o[f[1]+' km']=r[f[0]+'km']}});return o})),n.slice(0,30).replace(/[\/]/g,'-')));
+XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(D.drums.filter(d=>ok(d.cable)).map(d=>({Cable:cn(d.cable),Stock:SN[d.stock],'Drum no':d.no,Size:d.size,Km:d.km,Status:d.status=='full'?'In stock':'Empty','Emptied at':d.usedIn||''}))),'Drum stock');
+XLSX.writeFile(wb,'LT_Plant_Stock_'+(all?'ALL':cn(cur).replace(/\W+/g,'_'))+'.xlsx')}
+function go(){cur=D.cables.find(c=>c.id==cur)?cur:(D.cables[0]||{}).id||'';document.getElementById('cur').innerHTML=D.cables.map(c=>'<option value="'+c.id+'"'+(c.id==cur?' selected':'')+'>'+esc(c.name)+'</option>').join('');
+document.getElementById('nav').innerHTML=[['dash','Dashboard'],...S,['stock','Drum stock']].map(t=>'<button class="'+(t[0]==tab?'on':'')+'" onclick="tab=\''+t[0]+'\';go()">'+t[1]+'</button>').join('');
+document.getElementById('v').innerHTML=tab=='dash'?dash():tab=='stock'?stock():stage(tab)}
+go();stat();
+</script></body></html>
